@@ -1,19 +1,18 @@
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Graphics;
 import java.awt.GridLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.Queue;
 
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JSlider;
 import javax.swing.Timer;
 
 public class MusicReader extends JFrame {
@@ -21,6 +20,7 @@ public class MusicReader extends JFrame {
 	static MusicReader musicReader;
 	static Recorder recorder;
 	static int width = 800, height = 600;
+	static int scale = 3;
 	
 	public static void main(String[] args) {
 		recorder = new Recorder();
@@ -83,8 +83,8 @@ public class MusicReader extends JFrame {
 		buttonPanel.add(pause);
 		buttonPanel.add(stop);
 		
-		JPanel infoPanel = new JPanel(new GridLayout(2, 0));
-		infoPanel.setPreferredSize(new Dimension(width - 300, height));
+		JPanel infoPanel = new JPanel(new GridLayout(2, 2));
+		infoPanel.setPreferredSize(new Dimension(width - 300, 50));
 		
 		JLabel encoding = new JLabel("Encoding: " + recorder.getFormat().getEncoding(), JLabel.CENTER);
 		JLabel samplesPerSec = new JLabel("Samples/sec: " + recorder.getFormat().getSampleRate(), JLabel.CENTER);
@@ -110,19 +110,19 @@ public class MusicReader extends JFrame {
 		graphPanel.setPreferredSize(new Dimension(width, height - 50));
 		
 		VolumeMeter volumeMeter = new VolumeMeter();
-		volumeMeter.setPreferredSize(new Dimension(20, 200));
+		volumeMeter.setPreferredSize(new Dimension(20, 550));
 		volumeMeter.setVisible(true);
 		
-		SoundWaveGraph soundWaveGraph = new SoundWaveGraph();
-		soundWaveGraph.setPreferredSize(new Dimension(width - 20, height));
-		soundWaveGraph.setVisible(true);
-		
+		FrequencySpectrum frequencySpectrum = new FrequencySpectrum();
+		frequencySpectrum.setPreferredSize(new Dimension(width - 20, height - 50));
+		frequencySpectrum.setVisible(true);
+
 		graphPanel.add(volumeMeter, BorderLayout.WEST);
-		graphPanel.add(soundWaveGraph, BorderLayout.EAST);
+		graphPanel.add(frequencySpectrum, BorderLayout.CENTER);
 		graphPanel.setVisible(true);
 		
 		panel.add(controlPanel, BorderLayout.NORTH);
-		panel.add(graphPanel, BorderLayout.SOUTH);
+		panel.add(graphPanel, BorderLayout.CENTER);
 		panel.setVisible(true);
 		
 		this.add(panel);
@@ -137,8 +137,7 @@ public class MusicReader extends JFrame {
 		public VolumeMeter(){
 			Timer timer = new Timer(100, new ActionListener(){
 				public void actionPerformed(ActionEvent e){
-					level = recorder.getLevel();
-					//System.out.println(level);
+					level = 3 * recorder.getLevel();
 					repaint();
 				}
 			});
@@ -153,32 +152,26 @@ public class MusicReader extends JFrame {
 		}
 	}
 	
-	private class SoundWaveGraph extends JPanel{
+	private class FrequencySpectrum extends JPanel{
 		
-		Queue<Double> data = new LinkedList<Double>();
-		int updatesPerSec = (int) recorder.getFormat().getSampleRate() / recorder.getBufferSize();
-		int repaintsPerSec = 2;
-		int maxLength = 100;
-		
-		public SoundWaveGraph(){
-			this.data = new LinkedList<Double>();
-		}
-		
-		public void addData(double[] normalizedData){
-			int overflow = data.size() + normalizedData.length - maxLength;
-			for(double d : normalizedData){
-				data.add(d);
-				data.poll();
-			}
+		public FrequencySpectrum(){
+			Timer timer = new Timer(100, new ActionListener(){
+				public void actionPerformed(ActionEvent e){
+					repaint();
+				}
+			});
+			timer.start();
 		}
 		
 		public void paintComponent(Graphics g){
 			super.paintComponent(g);
 			g.setColor(Color.black);
-			int startX = this.getX(), y0 = this.getY() + this.getHeight() / 2, width = this.getWidth() / data.size();
-			Iterator<Double> itr = data.iterator();
-			for(int i = 0; i < data.size(); i++){
-				g.fillOval(startX + i * width, (int) (y0 - itr.next() * this.getHeight() / 2), 2, 2);			}
+			int width = this.getWidth() / 88;
+			double[] frequencySpectrum = recorder.getFrequencySpectrum();
+			for(int i = 0; i < 88; i++){
+				int height = (int) (3 * frequencySpectrum[i] * this.getHeight());
+				g.fillRect(i * width, this.getHeight() - height, width, height);
+			}
 		}
 	}
 }

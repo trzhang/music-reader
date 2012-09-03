@@ -23,6 +23,10 @@ public class Recorder extends Thread{
 	private boolean paused;
 	private double level;
 	private int bufferSize;
+	private double[] buffer;
+	private double[] frequencySpectrum;
+	private double[] noiseThresholds;
+	private static double[] frequencies = {27.5, 29.1352, 30.8677, 32.7032, 34.6478, 36.7081, 38.8909, 41.2034, 43.6535, 46.2493, 48.9994, 51.9131, 55, 58.2705, 61.7354, 65.4064, 69.2957, 73.4162, 77.7817, 82.4069, 87.3071, 92.4986, 97.9989, 103.826, 110, 116.541, 123.471, 130.813, 138.591, 146.832, 155.563, 164.814, 174.614, 184.997, 195.998, 207.652, 220, 233.082, 246.942, 261.626, 277.183, 293.665, 311.127, 329.628, 349.228, 369.994, 391.995, 415.305, 440, 466.164, 493.883, 523.251, 554.365, 587.33, 622.254, 659.255, 698.456, 739.989, 783.991, 830.609, 880, 932.328, 987.767, 1046.5, 1108.73, 1174.66, 1244.51, 1318.51, 1396.91, 1479.98, 1567.98, 1661.22, 1760, 1864.66, 1975.53, 2093, 2217.46, 2349.32, 2489.02, 2637.02, 2793.83, 2959.96, 3135.96, 3322.44, 3520, 3729.31, 3951.07, 4186.01};
 	
 	public Recorder(){
 		line = null;
@@ -32,6 +36,8 @@ public class Recorder extends Thread{
 		paused = false;
 		level = 0;
 		bufferSize = -1;
+		frequencySpectrum = new double[88];
+		noiseThresholds = new double[88];
 	}
 	
 	public void init(){
@@ -47,68 +53,89 @@ public class Recorder extends Thread{
 		    System.out.println("TargetDataLine unavailable.");
 		    System.exit(0);
 		}
-		if(bufferSize == -1)
+		if(bufferSize == -1){
 			bufferSize = Math.min(400, 8 * line.getBufferSize() / (format.getSampleSizeInBits() * format.getChannels()));
+			buffer = new double[bufferSize];
+		}
+		calibrate();
 		while(!recording);
 		startRecording();
+	}
+	
+	public void calibrate(){
+		double[] buffer = new double[bufferSize];
+		System.out.println("Calibrating...");
+		byte[] data = new byte[bufferSize * format.getSampleSizeInBits() * format.getChannels() / 8]; //line.getBufferSize() / 20;
+		line.start();
+		for(int count = 0; count < 1000; count++){
+			line.read(data, 0, data.length);
+			normalizeData(data, buffer);
+			for(int i = 0; i < 88; i++)
+				noiseThresholds[i] += frequencyComponent(buffer, frequencies[i]);
+		}
+		for(int i = 0; i < 88; i++)
+			noiseThresholds[i] /= 1000.;
+		System.out.println("Done");
+		System.out.println(Arrays.toString(noiseThresholds));
 	}
 
 	public void startRecording(){
 		System.out.println("Recording...");
-		line.start();
 		out = new ByteArrayOutputStream();
 		int numBytesRead;
 		byte[] data = new byte[bufferSize * format.getSampleSizeInBits() * format.getChannels() / 8]; //line.getBufferSize() / 20;
-		double[] normalizedData = new double[bufferSize]; //data.length / (format.getSampleSizeInBits() / 8 * format.getChannels())
 
 		// Begin audio capture.
 		line.start();
 
-		int i = 0;
+		int count = 0;
 		
-		// Here, stopped is a global boolean set by another thread.
+		// Here, recording is a global boolean set by another thread.
 		while(recording){
 			// Read the next chunk of data from the TargetDataLine.
 			numBytesRead = line.read(data, 0, data.length);
-			normalizeData(data, normalizedData);
-			setLevel(rms(normalizedData));
+			normalizeData(data, buffer);
+			setLevel(rms(buffer));
+			for(int i = 0; i < 88; i++)
+				frequencySpectrum[i] = Math.max(frequencyComponent(buffer, frequencies[i]) - noiseThresholds[i], 0);
+			System.out.println(Arrays.toString(buffer));
+			System.out.println(Arrays.toString(frequencySpectrum));
 			// Save this chunk of data.
-			out.write(data, 0, numBytesRead);		 
-			i++;
+			out.write(data, 0, numBytesRead);	 
+			count++;
 			while(paused);
 		}
-		processRecording(data.length / 2 * i);
+		processRecording(count * bufferSize);
 	}
 	
-	public void normalizeData(byte[] data, double[] normalizedData){
-		double max = 0.75 * Math.pow(2, format.getSampleSizeInBits() - 1);
+	public void normalizeData(byte[] data, double[] buffer){
+		double max = Math.pow(2, format.getSampleSizeInBits() - 1);
 		if(format.getSampleSizeInBits() == 8){
 			if(format.getChannels() == 1)
-				for(int i = 0; i < normalizedData.length; i++){
-					normalizedData[i] = data[i] / max;
-					if(Math.abs(normalizedData[i]) > 1)
-						normalizedData[i] = Math.signum(normalizedData[i]);
-				}
+				for(int i = 0; i < buffer.length; i++)
+					buffer[i] = data[i] / max;
 			else if(format.getChannels() == 2)
-				for(int i = 0; i < normalizedData.length; i++){
-					normalizedData[i] = (data[2 * i] + data[2 * i + 1]) / (2 * max);
-					if(Math.abs(normalizedData[i]) > 1)
-						normalizedData[i] = Math.signum(normalizedData[i]);
-				}
+				for(int i = 0; i < buffer.length; i++)
+					buffer[i] = (data[2 * i] + data[2 * i + 1]) / (2 * max);
 		} else if(format.getSampleSizeInBits() == 16){
 			if(format.getChannels() == 1)
-				for(int i = 0; i < normalizedData.length; i++){
-					normalizedData[i] = (256 * data[2 * i] + data[2 * i + 1]) / max;
-					if(Math.abs(normalizedData[i]) > 1)
-						normalizedData[i] = Math.signum(normalizedData[i]);
-				}
+				for(int i = 0; i < buffer.length; i++)
+					buffer[i] = (256 * data[2 * i] + data[2 * i + 1]) / max;
 			else if(format.getChannels() == 2)
-				for(int i = 0; i < normalizedData.length; i++){
-					normalizedData[i] = (256 * data[4 * i] + data[4 * i + 1] + 256 * data[4 * i + 2] + data[4 * i + 3]) / (2 * max);
-					if(Math.abs(normalizedData[i]) > 1)
-						normalizedData[i] = Math.signum(normalizedData[i]);
-				}
+				for(int i = 0; i < buffer.length; i++)
+					buffer[i] = (256 * data[4 * i] + data[4 * i + 1] + 256 * data[4 * i + 2] + data[4 * i + 3]) / (2 * max);
 		}
+	}
+	
+	public double frequencyComponent(double[] buffer, double frequency) {
+		double a = 0, b = 0;
+		double cFreq = 2 * Math.PI * frequency;
+		double dt = 1. / format.getSampleRate();
+		for(int i = 0; i < buffer.length; i++){
+			a += buffer[i] * Math.cos(cFreq * i * dt);
+			b += buffer[i] * Math.sin(cFreq * i * dt);
+		}
+		return Math.sqrt(Math.pow(a, 2) + Math.pow(b, 2)) / 88.;
 	}
 	
 	public double average(double[] data){
@@ -160,32 +187,16 @@ public class Recorder extends Thread{
 		return line;
 	}
 
-	public void setLine(TargetDataLine line) {
-		this.line = line;
-	}
-
 	public AudioFormat getFormat() {
 		return format;
-	}
-
-	public void setFormat(AudioFormat format) {
-		this.format = format;
 	}
 
 	public DataLine.Info getInfo() {
 		return info;
 	}
 
-	public void setInfo(DataLine.Info info) {
-		this.info = info;
-	}
-
 	public ByteArrayOutputStream getOut() {
 		return out;
-	}
-
-	public void setOut(ByteArrayOutputStream out) {
-		this.out = out;
 	}
 
 	public boolean isRecording() {
@@ -219,8 +230,12 @@ public class Recorder extends Thread{
 	public int getBufferSize() {
 		return bufferSize;
 	}
-
-	public void setBufferSize(int bufferSize) {
-		this.bufferSize = bufferSize;
+	
+	public double[] getBuffer() {
+		return buffer;
+	}
+	
+	public double[] getFrequencySpectrum() {
+		return frequencySpectrum;
 	}
 }
