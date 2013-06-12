@@ -1,7 +1,9 @@
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.Arrays;
 
 import javax.sound.sampled.AudioFileFormat;
@@ -21,12 +23,17 @@ public class Recorder extends Thread{
 	private ByteArrayOutputStream out;
 	private boolean recording;
 	private boolean paused;
+	private boolean training;
+	private Object lock;
 	private double level;
 	private int bufferSize;
 	private double[] buffer;
 	private double[] frequencySpectrum;
 	private double[] noiseThresholds;
-	private static double[] frequencies = {27.5, 29.1352, 30.8677, 32.7032, 34.6478, 36.7081, 38.8909, 41.2034, 43.6535, 46.2493, 48.9994, 51.9131, 55, 58.2705, 61.7354, 65.4064, 69.2957, 73.4162, 77.7817, 82.4069, 87.3071, 92.4986, 97.9989, 103.826, 110, 116.541, 123.471, 130.813, 138.591, 146.832, 155.563, 164.814, 174.614, 184.997, 195.998, 207.652, 220, 233.082, 246.942, 261.626, 277.183, 293.665, 311.127, 329.628, 349.228, 369.994, 391.995, 415.305, 440, 466.164, 493.883, 523.251, 554.365, 587.33, 622.254, 659.255, 698.456, 739.989, 783.991, 830.609, 880, 932.328, 987.767, 1046.5, 1108.73, 1174.66, 1244.51, 1318.51, 1396.91, 1479.98, 1567.98, 1661.22, 1760, 1864.66, 1975.53, 2093, 2217.46, 2349.32, 2489.02, 2637.02, 2793.83, 2959.96, 3135.96, 3322.44, 3520, 3729.31, 3951.07, 4186.01};
+	private double[][] trainData;
+	private double learningRate;
+	private double noiseThreshold;
+	private int lo, hi;
 	
 	public Recorder(){
 		line = null;
@@ -34,10 +41,17 @@ public class Recorder extends Thread{
 		info = new DataLine.Info(TargetDataLine.class, format);
 		recording = false;
 		paused = false;
+		training = false;
+		lock = new Object();
 		level = 0;
 		bufferSize = -1;
 		frequencySpectrum = new double[88];
 		noiseThresholds = new double[88];
+		trainData = new double[88][88];
+		learningRate = 0.05;
+		noiseThreshold = 0.05;
+		lo = 39;
+		hi = 52;
 	}
 	
 	public void init(){
@@ -54,31 +68,48 @@ public class Recorder extends Thread{
 		    System.exit(0);
 		}
 		if(bufferSize == -1){
-			bufferSize = Math.min(400, 8 * line.getBufferSize() / (format.getSampleSizeInBits() * format.getChannels()));
+			bufferSize = Math.min(512, 8 * line.getBufferSize() / (format.getSampleSizeInBits() * format.getChannels()));
 			buffer = new double[bufferSize];
 		}
 		calibrate();
-		while(!recording);
+		synchronized(lock) {
+			while(!recording) {
+				try {
+					lock.wait();
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 		startRecording();
 	}
 	
 	public void calibrate(){
+		int n = 100;
+		double sum = 0;
 		double[] buffer = new double[bufferSize];
 		System.out.println("Calibrating...");
 		byte[] data = new byte[bufferSize * format.getSampleSizeInBits() * format.getChannels() / 8]; //line.getBufferSize() / 20;
 		line.start();
-		for(int count = 0; count < 1000; count++){
+		for(int count = 0; count < n; count++){
+			double max = Double.MIN_VALUE;
 			line.read(data, 0, data.length);
-			normalizeData(data, buffer);
-			for(int i = 0; i < 88; i++)
-				noiseThresholds[i] += frequencyComponent(buffer, frequencies[i]);
+			convertRawDataToBuffer(data, buffer);
+			for(int i = lo; i < hi; i++) {
+				double delta = dft(buffer, MusicUtil.frequencies[i]);
+				noiseThresholds[i] += delta;
+				if(delta > max)
+					max = delta;
+			}
+			sum += max;
 		}
-		for(int i = 0; i < 88; i++)
-			noiseThresholds[i] /= 1000.;
+		for(int i = lo; i < hi; i++)
+			noiseThresholds[i] /= Double.valueOf(n);
+		noiseThreshold = sum / Double.valueOf(n);
 		System.out.println("Done");
-		System.out.println(Arrays.toString(noiseThresholds));
+//		System.out.println(Arrays.toString(noiseThresholds));
 	}
-
+	
 	public void startRecording(){
 		System.out.println("Recording...");
 		out = new ByteArrayOutputStream();
@@ -94,21 +125,59 @@ public class Recorder extends Thread{
 		while(recording){
 			// Read the next chunk of data from the TargetDataLine.
 			numBytesRead = line.read(data, 0, data.length);
-			normalizeData(data, buffer);
+			convertRawDataToBuffer(data, buffer);
+			buffer = highPass(buffer, MusicUtil.frequencies[19]);
 			setLevel(rms(buffer));
-			for(int i = 0; i < 88; i++)
-				frequencySpectrum[i] = Math.max(frequencyComponent(buffer, frequencies[i]) - noiseThresholds[i], 0);
-			System.out.println(Arrays.toString(buffer));
-			System.out.println(Arrays.toString(frequencySpectrum));
+			for(int i = lo; i < hi; i++)
+				frequencySpectrum[i] = Math.max(dft(buffer, MusicUtil.frequencies[i]) - noiseThresholds[i], 0);
+			double[] normalizedFrequencySpectrum = normalize(Arrays.copyOf(frequencySpectrum, 88));
+			double[] trimmedFrequencySpectrum = new double[hi - lo];
+			for(int i = 0; i < hi - lo; i++)
+				trimmedFrequencySpectrum[i] = frequencySpectrum[lo + i];
+			double[] transformedFrequencySpectrum = MusicUtil.lsolve(MusicUtil.transpose(MusicUtil.testData), trimmedFrequencySpectrum);
+//			System.out.println(Arrays.toString(trimmedFrequencySpectrum));
+//			System.out.println(Arrays.toString(transformedFrequencySpectrum));
+			if(noteLikelyPlayed())
+				System.out.println(MusicUtil.noteNames[argmax(frequencySpectrum)]);
+			if(training) {
+				if(noteLikelyPlayed() && Math.random() < 0.1) {
+					int note = argmax(frequencySpectrum);
+					for(int j = lo; j < hi; j++)
+						trainData[note][j] = (1 - learningRate) * trainData[note][j] + learningRate * normalizedFrequencySpectrum[j];
+					normalize(trainData[note]);
+				}
+			}
+			for(int i = 0; i < hi - lo; i++)
+				frequencySpectrum[lo + i] = transformedFrequencySpectrum[i];
 			// Save this chunk of data.
 			out.write(data, 0, numBytesRead);	 
 			count++;
-			while(paused);
+			synchronized(lock) {
+				while(paused) {
+					try {
+						lock.wait();
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+			}
 		}
 		processRecording(count * bufferSize);
 	}
 	
-	public void normalizeData(byte[] data, double[] buffer){
+	public double[] highPass(double[] buffer, double thresholdFreq) {
+		double[] ret = new double[buffer.length];
+		double rc = 2 * Math.PI * thresholdFreq;
+		double dt = 1. / format.getSampleRate();
+		double a = rc / (rc + dt);
+		ret[0] = buffer[0];
+		for(int i = 1; i < buffer.length; i++)
+			ret[i] = a * ret[i - 1] + a * (buffer[i] - buffer[i - 1]);
+		return ret;
+	}
+	
+	// Convert java audio data into usable buffer data
+	public void convertRawDataToBuffer(byte[] data, double[] buffer){
 		double max = Math.pow(2, format.getSampleSizeInBits() - 1);
 		if(format.getSampleSizeInBits() == 8){
 			if(format.getChannels() == 1)
@@ -127,7 +196,8 @@ public class Recorder extends Thread{
 		}
 	}
 	
-	public double frequencyComponent(double[] buffer, double frequency) {
+	// DFT on time domain buffer data
+	public double dft(double[] buffer, double frequency) {
 		double a = 0, b = 0;
 		double cFreq = 2 * Math.PI * frequency;
 		double dt = 1. / format.getSampleRate();
@@ -152,6 +222,27 @@ public class Recorder extends Thread{
 		return Math.sqrt(sum / data.length);
 	}
 	
+	// Normalize an array
+	public double[] normalize(double[] data) {
+		double norm = 0;
+		for(double d : data)
+			norm += Math.pow(d, 2);
+		norm = Math.sqrt(norm);
+		for(int i = 0; i < data.length; i++)
+			data[i] /= norm;
+		return data;
+	}
+	
+	public boolean noteLikelyPlayed() {
+		double max = Double.MIN_VALUE;
+		for(double d : frequencySpectrum) {
+			if(d > max)
+				max = d;
+		}
+		return max > noiseThreshold;
+	}
+	
+	// Post processing (write audio file)
 	public void processRecording(int length){
 		System.out.println("Processing...");
 		ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());
@@ -205,6 +296,10 @@ public class Recorder extends Thread{
 
 	public void setRecording(boolean recording) {
 		this.recording = recording;
+		if(recording)
+			synchronized(lock) {
+				lock.notify();
+			}
 	}
 	
 	public void run(){
@@ -219,6 +314,31 @@ public class Recorder extends Thread{
 		this.paused = paused;
 	}
 
+	public void toggleTraining() {
+		this.training = !this.training;
+		if(training)
+			System.out.println("Training");
+		else {
+			System.out.println("Done training");
+			writeTrainData();
+		}
+	}
+	
+	// Write training data to file
+	public void writeTrainData() {
+		try {
+			PrintWriter out = new PrintWriter(new File("trainData.csv"));
+			for(int i = 0; i < 88; i++) {
+				for(int j = 0; j < 87; j++)
+					out.print(trainData[i][j] + ",");
+				out.print(trainData[i][87] + "\n");
+			}
+			out.close();
+		} catch(FileNotFoundException e) {
+			e.printStackTrace();
+		}
+	}
+	
 	public double getLevel() {
 		return level;
 	}
@@ -237,5 +357,17 @@ public class Recorder extends Thread{
 	
 	public double[] getFrequencySpectrum() {
 		return frequencySpectrum;
+	}
+	
+	public int argmax(double[] arr) {
+		double max = Double.MIN_VALUE;
+		int argmax = 0;
+		for(int i = 0; i < arr.length; i++) {
+			if(arr[i] > max) {
+				max = arr[i];
+				argmax = i;
+			}
+		}
+		return argmax;
 	}
 }

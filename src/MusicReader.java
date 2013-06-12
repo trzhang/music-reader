@@ -1,18 +1,19 @@
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.Graphics;
 import java.awt.GridLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionAdapter;
 
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JSlider;
 import javax.swing.Timer;
 
 public class MusicReader extends JFrame {
@@ -46,8 +47,8 @@ public class MusicReader extends JFrame {
 		final ImageIcon recordIcon = new ImageIcon("images/record.png");
 		final JButton start = new JButton(startIcon);
 		start.setFocusPainted(false);
-		start.addActionListener(new ActionListener(){
-			public void actionPerformed(ActionEvent e){
+		start.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
 				if(!recorder.isRecording())
 					recorder.setRecording(true);
 				if(recorder.isPaused())
@@ -59,8 +60,8 @@ public class MusicReader extends JFrame {
 		start.setVisible(true);
 		ImageIcon pauseIcon = new ImageIcon("images/pause.png");
 		JButton pause = new JButton(pauseIcon);
-		pause.addActionListener(new ActionListener(){
-			public void actionPerformed(ActionEvent e){
+		pause.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
 				if(recorder.isRecording())
 					start.setIcon(startIcon);
 				else
@@ -71,17 +72,25 @@ public class MusicReader extends JFrame {
 		pause.setVisible(true);
 		ImageIcon stopIcon = new ImageIcon("images/stop.png");
 		JButton stop = new JButton(stopIcon);
-		stop.addActionListener(new ActionListener(){
-			public void actionPerformed(ActionEvent e){
+		stop.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
 				start.setIcon(startIcon);
 				recorder.setRecording(false);
 				recorder.setPaused(false);
 			}
 		});
 		stop.setVisible(true);
+		JButton train = new JButton("Train");
+		train.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
+				recorder.toggleTraining();
+			}
+		});
+		train.setVisible(true);
 		buttonPanel.add(start);
 		buttonPanel.add(pause);
 		buttonPanel.add(stop);
+		buttonPanel.add(train);
 		
 		JPanel infoPanel = new JPanel(new GridLayout(2, 2));
 		infoPanel.setPreferredSize(new Dimension(width - 300, 50));
@@ -115,6 +124,11 @@ public class MusicReader extends JFrame {
 		
 		FrequencySpectrum frequencySpectrum = new FrequencySpectrum();
 		frequencySpectrum.setPreferredSize(new Dimension(width - 20, height - 50));
+		frequencySpectrum.addMouseListener(new MouseAdapter() {
+			public void mouseClicked(MouseEvent e) {
+				recorder.pauseRecording();
+			}
+		});
 		frequencySpectrum.setVisible(true);
 
 		graphPanel.add(volumeMeter, BorderLayout.WEST);
@@ -137,7 +151,7 @@ public class MusicReader extends JFrame {
 		public VolumeMeter(){
 			Timer timer = new Timer(100, new ActionListener(){
 				public void actionPerformed(ActionEvent e){
-					level = 3 * recorder.getLevel();
+					level = recorder.getLevel();
 					repaint();
 				}
 			});
@@ -161,16 +175,24 @@ public class MusicReader extends JFrame {
 				}
 			});
 			timer.start();
+			this.addMouseMotionListener(new MouseMotionAdapter() {
+				public void mouseMoved(MouseEvent e) {
+					int index = e.getX() / (getWidth() / 88);
+					String note = index < 88 ? MusicUtil.noteNames[index] : "";
+					String frequency = index < 88 ? String.valueOf(MusicUtil.frequencies[index]) : "";
+					setToolTipText("<html> Note: " + note + "<br>" + "Frequency: " + frequency + "</html>");
+				}
+			});
 		}
 		
 		public void paintComponent(Graphics g){
 			super.paintComponent(g);
 			g.setColor(Color.black);
-			int width = this.getWidth() / 88;
+			int barWidth = this.getWidth() / 88;
 			double[] frequencySpectrum = recorder.getFrequencySpectrum();
 			for(int i = 0; i < 88; i++){
-				int height = (int) (3 * frequencySpectrum[i] * this.getHeight());
-				g.fillRect(i * width, this.getHeight() - height, width, height);
+				int barHeight = (int) (frequencySpectrum[i] * this.getHeight());
+				g.fillRect(i * barWidth, this.getHeight() - barHeight, barWidth, barHeight);
 			}
 		}
 	}
