@@ -31,9 +31,11 @@ public class Recorder extends Thread{
 	private double[] frequencySpectrum;
 	private double[] noiseThresholds;
 	private double[][] trainData;
-	private double learningRate;
+	private double[] defaultDist;
+	private int[] learningRateReciprocals;
 	private double noiseThreshold;
 	private int lo, hi;
+	private int noteLabelCounter;
 	
 	public Recorder(){
 		line = null;
@@ -48,10 +50,19 @@ public class Recorder extends Thread{
 		frequencySpectrum = new double[88];
 		noiseThresholds = new double[88];
 		trainData = new double[88][88];
-		learningRate = 0.05;
+		defaultDist = new double[] {0.25, 0.5, 1, 0.5, 0.25};
+		for(int i = 0; i < 88; i++) {
+			for(int j = -2; j <= 2; j++)
+				if(i + j >= 0 && i + j < 88)
+					trainData[i][i + j] = defaultDist[j + 2];
+			normalize(trainData[i]);
+		}
+		learningRateReciprocals = new int[88];
+		Arrays.fill(learningRateReciprocals, 5);
 		noiseThreshold = 0.05;
-		lo = 39;
-		hi = 52;
+		lo = 39;//39;
+		hi = 52;//52;
+		noteLabelCounter = lo;
 	}
 	
 	public void init(){
@@ -141,16 +152,19 @@ public class Recorder extends Thread{
 				System.out.println(MusicUtil.noteNames[argmax(frequencySpectrum)]);
 			if(training) {
 				if(noteLikelyPlayed() && Math.random() < 0.1) {
-					int note = argmax(frequencySpectrum);
+					int note = noteLabelCounter;
+//					int note = argmax(frequencySpectrum);
 					for(int j = lo; j < hi; j++)
-						trainData[note][j] = (1 - learningRate) * trainData[note][j] + learningRate * normalizedFrequencySpectrum[j];
+						trainData[note][j] = (1 - 1. / learningRateReciprocals[note]) * trainData[note][j] + 1. / learningRateReciprocals[note] * normalizedFrequencySpectrum[j];
 					normalize(trainData[note]);
+					learningRateReciprocals[note]++;
 				}
 			}
+//			System.out.println(getNoteTrainingProgress());
 			for(int i = 0; i < hi - lo; i++)
 				frequencySpectrum[lo + i] = transformedFrequencySpectrum[i];
 			// Save this chunk of data.
-			out.write(data, 0, numBytesRead);	 
+			out.write(data, 0, numBytesRead);
 			count++;
 			synchronized(lock) {
 				while(paused) {
@@ -239,7 +253,7 @@ public class Recorder extends Thread{
 			if(d > max)
 				max = d;
 		}
-		return max > noiseThreshold;
+		return max > 2 * noiseThreshold;
 	}
 	
 	// Post processing (write audio file)
@@ -339,6 +353,13 @@ public class Recorder extends Thread{
 		}
 	}
 	
+	public void incrementNote() {
+		noteLabelCounter++;
+		if(noteLabelCounter >= hi)
+			noteLabelCounter = lo;
+			
+	}
+	
 	public double getLevel() {
 		return level;
 	}
@@ -357,6 +378,22 @@ public class Recorder extends Thread{
 	
 	public double[] getFrequencySpectrum() {
 		return frequencySpectrum;
+	}
+	
+	public int getNoteLabelCounter() {
+		return noteLabelCounter;
+	}
+	
+	public double getNoteTrainingProgress() {
+		return Math.min((learningRateReciprocals[noteLabelCounter] - 5) / 20., 1);
+	}
+	
+	public int getLo() {
+		return lo;
+	}
+	
+	public int getHi() {
+		return hi;
 	}
 	
 	public int argmax(double[] arr) {

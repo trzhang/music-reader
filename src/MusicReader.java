@@ -22,6 +22,7 @@ public class MusicReader extends JFrame {
 	static Recorder recorder;
 	static int width = 800, height = 600;
 	static int scale = 3;
+	static NoteLabel note;
 	
 	public static void main(String[] args) {
 		recorder = new Recorder();
@@ -41,7 +42,7 @@ public class MusicReader extends JFrame {
 		controlPanel.setPreferredSize(new Dimension(width, 50));
 		
 		JPanel buttonPanel = new JPanel();
-		buttonPanel.setPreferredSize(new Dimension(300, 50));
+		buttonPanel.setPreferredSize(new Dimension(450, 50));
 		
 		final ImageIcon startIcon = new ImageIcon("images/play.png");
 		final ImageIcon recordIcon = new ImageIcon("images/record.png");
@@ -87,13 +88,25 @@ public class MusicReader extends JFrame {
 			}
 		});
 		train.setVisible(true);
+		JButton skip = new JButton("Skip");
+		skip.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
+				recorder.incrementNote();
+				note.setText("Note: " + MusicUtil.noteNames[recorder.getNoteLabelCounter()]);
+			}
+		});
+		skip.setVisible(true);
+		note = new NoteLabel("Note: " + MusicUtil.noteNames[recorder.getLo()], recorder);
+		note.setVisible(true);
 		buttonPanel.add(start);
 		buttonPanel.add(pause);
 		buttonPanel.add(stop);
 		buttonPanel.add(train);
+		buttonPanel.add(skip);
+		buttonPanel.add(note);
 		
 		JPanel infoPanel = new JPanel(new GridLayout(2, 2));
-		infoPanel.setPreferredSize(new Dimension(width - 300, 50));
+		infoPanel.setPreferredSize(new Dimension(width - 450, 50));
 		
 		JLabel encoding = new JLabel("Encoding: " + recorder.getFormat().getEncoding(), JLabel.CENTER);
 		JLabel samplesPerSec = new JLabel("Samples/sec: " + recorder.getFormat().getSampleRate(), JLabel.CENTER);
@@ -195,5 +208,30 @@ public class MusicReader extends JFrame {
 				g.fillRect(i * barWidth, this.getHeight() - barHeight, barWidth, barHeight);
 			}
 		}
+	}
+}
+
+class NoteLabel extends JLabel {
+	
+	private Recorder recorder;
+	
+	public NoteLabel(String s, Recorder recorder) {
+		super(s);
+		this.recorder = recorder;
+		Timer timer = new Timer(100, new ActionListener(){
+			public void actionPerformed(ActionEvent e){
+				repaint();
+			}
+		});
+		timer.start();
+	}
+	
+	public void paintComponent(Graphics g) {
+		super.paintComponent(g);
+		if(recorder.getNoteTrainingProgress() < 1)
+			g.setColor(Color.red);
+		else
+			g.setColor(Color.green);
+		g.fillRect(0, this.getHeight() - 3, (int) (recorder.getNoteTrainingProgress() * this.getWidth()), this.getHeight());
 	}
 }
