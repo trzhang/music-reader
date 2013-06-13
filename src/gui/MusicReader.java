@@ -1,3 +1,4 @@
+package gui;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -15,6 +16,9 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.Timer;
+
+import sound.Recorder;
+import util.MusicUtil;
 
 public class MusicReader extends JFrame {
 	
@@ -92,11 +96,11 @@ public class MusicReader extends JFrame {
 		skip.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent e) {
 				recorder.incrementNote();
-				note.setText("Note: " + MusicUtil.noteNames[recorder.getNoteLabelCounter()]);
+				note.setText("Note: " + MusicUtil.NOTE_NAMES[recorder.getNoteLabelCounter()]);
 			}
 		});
 		skip.setVisible(true);
-		note = new NoteLabel("Note: " + MusicUtil.noteNames[recorder.getLo()], recorder);
+		note = new NoteLabel("Note: " + MusicUtil.NOTE_NAMES[recorder.getLo()], recorder);
 		note.setVisible(true);
 		buttonPanel.add(start);
 		buttonPanel.add(pause);
@@ -181,8 +185,10 @@ public class MusicReader extends JFrame {
 	
 	private class FrequencySpectrum extends JPanel{
 		
+		private final Color BAR_COLOR = new Color(0f, 0f, 0f, 0.3f);
+		
 		public FrequencySpectrum(){
-			Timer timer = new Timer(100, new ActionListener(){
+			Timer timer = new Timer(50, new ActionListener(){
 				public void actionPerformed(ActionEvent e){
 					repaint();
 				}
@@ -191,8 +197,8 @@ public class MusicReader extends JFrame {
 			this.addMouseMotionListener(new MouseMotionAdapter() {
 				public void mouseMoved(MouseEvent e) {
 					int index = e.getX() / (getWidth() / 88);
-					String note = index < 88 ? MusicUtil.noteNames[index] : "";
-					String frequency = index < 88 ? String.valueOf(MusicUtil.frequencies[index]) : "";
+					String note = index < 88 ? MusicUtil.NOTE_NAMES[index] : "";
+					String frequency = index < 88 ? String.valueOf(MusicUtil.FREQUENCIES[index]) : "";
 					setToolTipText("<html> Note: " + note + "<br>" + "Frequency: " + frequency + "</html>");
 				}
 			});
@@ -203,10 +209,20 @@ public class MusicReader extends JFrame {
 			g.setColor(Color.black);
 			int barWidth = this.getWidth() / 88;
 			double[] frequencySpectrum = recorder.getFrequencySpectrum();
-			for(int i = 0; i < 88; i++){
-				int barHeight = (int) (frequencySpectrum[i] * this.getHeight());
-				g.fillRect(i * barWidth, this.getHeight() - barHeight, barWidth, barHeight);
+			for(int i = 0; i < 88; i++) {
+				int height1 = (int) (frequencySpectrum[i] * this.getHeight());
+				g.setColor(BAR_COLOR);
+				g.fillRect(i * barWidth, this.getHeight() - height1, barWidth, height1);
+				if(i < 87) {
+					int height2 = (int) (frequencySpectrum[i + 1] * this.getHeight());
+					g.setColor(Color.red);
+					g.drawLine(i * barWidth + barWidth / 2, this.getHeight() - height1, (i + 1) * barWidth + barWidth / 2, this.getHeight() - height2);
+				}
 			}
+//			for(int i = 0; i < 88; i++){
+//				int barHeight = (int) (frequencySpectrum[i] * this.getHeight());
+//				g.fillRect(i * barWidth, this.getHeight() - barHeight, barWidth, barHeight);
+//			}
 		}
 	}
 }

@@ -1,3 +1,4 @@
+package sound;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -13,6 +14,8 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.TargetDataLine;
+
+import util.MusicUtil;
 
 
 public class Recorder extends Thread{
@@ -60,8 +63,8 @@ public class Recorder extends Thread{
 		learningRateReciprocals = new int[88];
 		Arrays.fill(learningRateReciprocals, 5);
 		noiseThreshold = 0.05;
-		lo = 39;//39;
-		hi = 52;//52;
+		lo = 0;//39;
+		hi = 88;//52;
 		noteLabelCounter = lo;
 	}
 	
@@ -107,7 +110,7 @@ public class Recorder extends Thread{
 			line.read(data, 0, data.length);
 			convertRawDataToBuffer(data, buffer);
 			for(int i = lo; i < hi; i++) {
-				double delta = dft(buffer, MusicUtil.frequencies[i]);
+				double delta = dft(buffer, MusicUtil.FREQUENCIES[i]);
 				noiseThresholds[i] += delta;
 				if(delta > max)
 					max = delta;
@@ -137,19 +140,19 @@ public class Recorder extends Thread{
 			// Read the next chunk of data from the TargetDataLine.
 			numBytesRead = line.read(data, 0, data.length);
 			convertRawDataToBuffer(data, buffer);
-			buffer = highPass(buffer, MusicUtil.frequencies[19]);
+			buffer = highPass(buffer, MusicUtil.FREQUENCIES[19]);
 			setLevel(rms(buffer));
 			for(int i = lo; i < hi; i++)
-				frequencySpectrum[i] = Math.max(dft(buffer, MusicUtil.frequencies[i]) - noiseThresholds[i], 0);
+				frequencySpectrum[i] = Math.max(dft(buffer, MusicUtil.FREQUENCIES[i]) - noiseThresholds[i], 0);
 			double[] normalizedFrequencySpectrum = normalize(Arrays.copyOf(frequencySpectrum, 88));
 			double[] trimmedFrequencySpectrum = new double[hi - lo];
 			for(int i = 0; i < hi - lo; i++)
 				trimmedFrequencySpectrum[i] = frequencySpectrum[lo + i];
-			double[] transformedFrequencySpectrum = MusicUtil.lsolve(MusicUtil.transpose(MusicUtil.testData), trimmedFrequencySpectrum);
+//			double[] transformedFrequencySpectrum = MusicUtil.lsolve(MusicUtil.transpose(MusicUtil.TEST_DATA), trimmedFrequencySpectrum);
 //			System.out.println(Arrays.toString(trimmedFrequencySpectrum));
 //			System.out.println(Arrays.toString(transformedFrequencySpectrum));
 			if(noteLikelyPlayed())
-				System.out.println(MusicUtil.noteNames[argmax(frequencySpectrum)]);
+				System.out.println(MusicUtil.NOTE_NAMES[argmax(frequencySpectrum)]);
 			if(training) {
 				if(noteLikelyPlayed() && Math.random() < 0.1) {
 					int note = noteLabelCounter;
@@ -161,8 +164,8 @@ public class Recorder extends Thread{
 				}
 			}
 //			System.out.println(getNoteTrainingProgress());
-			for(int i = 0; i < hi - lo; i++)
-				frequencySpectrum[lo + i] = transformedFrequencySpectrum[i];
+//			for(int i = 0; i < hi - lo; i++)
+//				frequencySpectrum[lo + i] = transformedFrequencySpectrum[i];
 			// Save this chunk of data.
 			out.write(data, 0, numBytesRead);
 			count++;
