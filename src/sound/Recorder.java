@@ -15,10 +15,21 @@ import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.TargetDataLine;
 
+import util.MathUtil;
 import util.MusicUtil;
 
 
 public class Recorder extends Thread{
+	
+	public static final int SAMPLE_RATE = 16000;
+	public static final int SAMPLE_SIZE_IN_BITS = 16;
+	public static final int CHANNELS = 1;
+	public static final boolean SIGNED = true;
+	public static final boolean BIG_ENDIAN = true;
+	public static final int BITS_PER_BYTE = 8;
+	public static final int DEFAULT_BUFFER_SIZE = 256;
+	
+	public static double BUFFER_SAMPLE_RATE = 62.5;
 	
 	private TargetDataLine line;
 	private AudioFormat format;
@@ -42,7 +53,7 @@ public class Recorder extends Thread{
 	
 	public Recorder(){
 		line = null;
-		format = new AudioFormat(16000, 16, 1, true, true);
+		format = new AudioFormat(SAMPLE_RATE, SAMPLE_SIZE_IN_BITS, CHANNELS, SIGNED, BIG_ENDIAN);
 		info = new DataLine.Info(TargetDataLine.class, format);
 		recording = false;
 		paused = false;
@@ -58,7 +69,7 @@ public class Recorder extends Thread{
 			for(int j = -2; j <= 2; j++)
 				if(i + j >= 0 && i + j < 88)
 					trainData[i][i + j] = defaultDist[j + 2];
-			normalize(trainData[i]);
+			MathUtil.normalize(trainData[i]);
 		}
 		learningRateReciprocals = new int[88];
 		Arrays.fill(learningRateReciprocals, 5);
@@ -82,9 +93,13 @@ public class Recorder extends Thread{
 		    System.exit(0);
 		}
 		if(bufferSize == -1){
-			bufferSize = Math.min(512, 8 * line.getBufferSize() / (format.getSampleSizeInBits() * format.getChannels()));
+			bufferSize = Math.min(DEFAULT_BUFFER_SIZE, BITS_PER_BYTE * line.getBufferSize() / (format.getSampleSizeInBits() * format.getChannels()));
 			buffer = new double[bufferSize];
 		}
+		int bitsPerSample = bufferSize * format.getSampleSizeInBits() * format.getChannels();
+		int bitsPerSecond = SAMPLE_RATE * SAMPLE_SIZE_IN_BITS;
+		BUFFER_SAMPLE_RATE = Double.valueOf(bitsPerSecond) / bitsPerSample;
+		
 		calibrate();
 		synchronized(lock) {
 			while(!recording) {
@@ -103,7 +118,7 @@ public class Recorder extends Thread{
 		double sum = 0;
 		double[] buffer = new double[bufferSize];
 		System.out.println("Calibrating...");
-		byte[] data = new byte[bufferSize * format.getSampleSizeInBits() * format.getChannels() / 8]; //line.getBufferSize() / 20;
+		byte[] data = new byte[bufferSize * format.getSampleSizeInBits() * format.getChannels() / BITS_PER_BYTE]; //line.getBufferSize() / 20;
 		line.start();
 		for(int count = 0; count < n; count++){
 			double max = Double.MIN_VALUE;
@@ -128,7 +143,7 @@ public class Recorder extends Thread{
 		System.out.println("Recording...");
 		out = new ByteArrayOutputStream();
 		int numBytesRead;
-		byte[] data = new byte[bufferSize * format.getSampleSizeInBits() * format.getChannels() / 8]; //line.getBufferSize() / 20;
+		byte[] data = new byte[bufferSize * format.getSampleSizeInBits() * format.getChannels() / BITS_PER_BYTE]; //line.getBufferSize() / 20;
 
 		// Begin audio capture.
 		line.start();
@@ -141,14 +156,14 @@ public class Recorder extends Thread{
 			numBytesRead = line.read(data, 0, data.length);
 			convertRawDataToBuffer(data, buffer);
 			buffer = highPass(buffer, MusicUtil.FREQUENCIES[19]);
-			setLevel(rms(buffer));
+			setLevel(MathUtil.rms(buffer));
 			for(int i = lo; i < hi; i++)
 				frequencySpectrum[i] = Math.max(dft(buffer, MusicUtil.FREQUENCIES[i]) - noiseThresholds[i], 0);
-			double[] normalizedFrequencySpectrum = normalize(Arrays.copyOf(frequencySpectrum, 88));
+			double[] normalizedFrequencySpectrum = MathUtil.normalize(Arrays.copyOf(frequencySpectrum, 88));
 			double[] trimmedFrequencySpectrum = new double[hi - lo];
 			for(int i = 0; i < hi - lo; i++)
 				trimmedFrequencySpectrum[i] = frequencySpectrum[lo + i];
-//			double[] transformedFrequencySpectrum = MusicUtil.lsolve(MusicUtil.transpose(MusicUtil.TEST_DATA), trimmedFrequencySpectrum);
+//			double[] transformedFrequencySpectrum = MathUtil.lsolve(MathUtil.transpose(MusicUtil.TEST_DATA), trimmedFrequencySpectrum);
 //			System.out.println(Arrays.toString(trimmedFrequencySpectrum));
 //			System.out.println(Arrays.toString(transformedFrequencySpectrum));
 			if(noteLikelyPlayed())
@@ -159,13 +174,13 @@ public class Recorder extends Thread{
 //					int note = argmax(frequencySpectrum);
 					for(int j = lo; j < hi; j++)
 						trainData[note][j] = (1 - 1. / learningRateReciprocals[note]) * trainData[note][j] + 1. / learningRateReciprocals[note] * normalizedFrequencySpectrum[j];
-					normalize(trainData[note]);
+					MathUtil.normalize(trainData[note]);
 					learningRateReciprocals[note]++;
 				}
 			}
-//			System.out.println(getNoteTrainingProgress());
 //			for(int i = 0; i < hi - lo; i++)
 //				frequencySpectrum[lo + i] = transformedFrequencySpectrum[i];
+//			frequencySpectrum = transformedFrequencySpectrum;
 			// Save this chunk of data.
 			out.write(data, 0, numBytesRead);
 			count++;
@@ -223,31 +238,6 @@ public class Recorder extends Thread{
 			b += buffer[i] * Math.sin(cFreq * i * dt);
 		}
 		return Math.sqrt(Math.pow(a, 2) + Math.pow(b, 2)) / 88.;
-	}
-	
-	public double average(double[] data){
-		double sum = 0;
-		for(double d : data)
-			sum += Math.abs(d);
-		return sum / data.length;
-	}
-	
-	public double rms(double[] data){
-		double sum = 0;
-		for(double d : data)
-			sum += Math.pow(d, 2);
-		return Math.sqrt(sum / data.length);
-	}
-	
-	// Normalize an array
-	public double[] normalize(double[] data) {
-		double norm = 0;
-		for(double d : data)
-			norm += Math.pow(d, 2);
-		norm = Math.sqrt(norm);
-		for(int i = 0; i < data.length; i++)
-			data[i] /= norm;
-		return data;
 	}
 	
 	public boolean noteLikelyPlayed() {
@@ -388,7 +378,7 @@ public class Recorder extends Thread{
 	}
 	
 	public double getNoteTrainingProgress() {
-		return Math.min((learningRateReciprocals[noteLabelCounter] - 5) / 20., 1);
+		return Math.min((learningRateReciprocals[noteLabelCounter] - 5) / 30., 1);
 	}
 	
 	public int getLo() {
